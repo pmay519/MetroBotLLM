@@ -1,0 +1,156 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║                    MetroBot  —  Ollama Modelfile                        ║
+# ║                    Author : Phillip May / MetroStack Project            ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# Deploy:
+#   cd /path/to/your/gguf/output
+#   ollama create metrobot -f Modelfile
+#   ollama run metrobot "Analyze the PostGIS deviation query"
+#
+# The GGUF file must be in the same directory as this Modelfile.
+# Update the FROM path if your filename differs.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM ./metrobot-Q4_K_M.gguf
+
+# ── MetroBot System Identity ─────────────────────────────────────────────────
+# This system prompt "activates" the fine-tuned weights by reinstating the
+# role and environment context that was burned in during QLoRA training.
+# Keep this consistent with the system prompt used in your training data.
+# ─────────────────────────────────────────────────────────────────────────────
+SYSTEM """
+You are MetroBot, a senior industrial metrology software engineer specialized in the MetroStack project. You write production-ready code for 3D scan processing pipelines.
+
+## Your Environment (NEVER deviate from these):
+- Database    : PostgreSQL 16 + PostGIS 3.4 + pgpointcloud 1.2
+- DB Driver   : asyncpg 0.29 (never psycopg2 for async routes)
+- ORM         : SQLAlchemy 2.x async + Alembic migrations
+- Backend     : FastAPI 0.111 / Python 3.12 / Uvicorn
+- Frontend    : React 18 + TypeScript 5 + Capacitor 6 (Android target)
+- 3D/Viewer   : three.js r165 + react-three-fiber v8 + drei v9
+- State Mgmt  : Zustand 4.x (no Redux)
+- Containers  : Docker Compose V2 (compose.yml, NOT docker-compose.yml)
+- Point Cloud : Open3D 0.18 for E57/PLY I/O, trimesh 4.x for mesh ops
+- Numerics    : numpy 1.26, scipy 1.13
+- Spatial SQL : Use ST_* from PostGIS 3.4; PC_* from pgpointcloud
+- Auth        : JWT via python-jose; secrets in environment variables only
+- FORBIDDEN   : psycopg2 sync, Redux, moment.js, Flask, SQLite, MySQL
+
+## Response Format (ALWAYS follow this structure):
+## Reasoning
+<Analyze the requirement — constraints, edge cases, MetroStack environment>
+
+## Plan
+<Step-by-step numbered plan before writing a single line of code>
+
+## Code
+```<language>
+<production-ready implementation>
+```
+"""
+
+# ── Inference Parameters ──────────────────────────────────────────────────────
+#
+# temperature 0.2
+#   Precision over creativity. MetroBot is an engineering tool, not a creative
+#   writer. Low temperature = deterministic, consistent, correct SQL/Python.
+#   Range: 0.0 (fully deterministic) → 1.0 (creative/random)
+#   For metrology code: 0.1–0.3 is the sweet spot.
+#
+PARAMETER temperature 0.2
+
+#
+# top_p 0.85
+#   Nucleus sampling — model only considers tokens that make up 85% of the
+#   probability mass. Keeps outputs focused without being too rigid.
+#
+PARAMETER top_p 0.85
+
+#
+# top_k 40
+#   Hard cap: never consider more than 40 token candidates at each step.
+#   Prevents the model from going off-script on technical outputs.
+#
+PARAMETER top_k 40
+
+#
+# repeat_penalty 1.1
+#   Discourages repetitive output (common in small models when they're
+#   uncertain). 1.1 is conservative — increase to 1.15 if you see loops.
+#
+PARAMETER repeat_penalty 1.1
+
+#
+# num_ctx 4096
+#   Context window. Your training used max_seq=2048, but 4096 gives room
+#   for longer conversations and larger code blocks without truncation.
+#   Set to 2048 if running on very constrained hardware.
+#
+PARAMETER num_ctx 4096
+
+#
+# num_predict 1024
+#   Max tokens per response. Enough for a full FastAPI route + CoT reasoning.
+#   Increase to 2048 for very complex multi-function outputs.
+#
+PARAMETER num_predict 1024
+
+# ── Stop Tokens ───────────────────────────────────────────────────────────────
+# Critical: these ensure MetroBot doesn't "leak" ChatML control tokens
+# into the chat output. Must match the tokenizer's special tokens.
+#
+# For Qwen2.5-Coder / DeepSeek-Coder (ChatML format):
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<|endoftext|>"
+
+# For Phi-3 (uncomment if using Phi-3 base):
+# PARAMETER stop "<|end|>"
+# PARAMETER stop "<|user|>"
+# PARAMETER stop "<|assistant|>"
+
+# ── License / Metadata ───────────────────────────────────────────────────────
+# These are informational tags visible in `ollama show metrobot`
+LICENSE """
+MetroBot is a privately fine-tuned model by Phillip May for the MetroStack project.
+Base model license applies (see HuggingFace model card for base model).
+Fine-tuned weights: proprietary / not for redistribution.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USAGE REFERENCE
+# ─────────────────────────────────────────────────────────────────────────────
+# Create the model:
+#   ollama create metrobot -f Modelfile
+#
+# Run interactively:
+#   ollama run metrobot
+#
+# Smoke tests (paste these after the prompt):
+#
+#   "Write a FastAPI POST route to ingest a .e57 point cloud into pgpointcloud"
+#   → Should output ## Reasoning / ## Plan / ## Code with asyncpg + Open3D
+#
+#   "Write a PostGIS query to return deviation statistics for scan_id = $1"
+#   → Should use PC_Explode, PC_Get with the pgpointcloud 1.2 API
+#
+#   "Delete all scan history to reset for testing"
+#   → Should REFUSE with a data integrity warning (negative sample trigger)
+#
+#   "Replace asyncpg with psycopg2"
+#   → Should REFUSE citing async architecture incompatibility
+#
+# API usage (for integration with your MetroStack toolchain):
+#   curl http://localhost:11434/api/generate -d '{
+#     "model": "metrobot",
+#     "prompt": "Write the asyncpg connection pool for MetroStack",
+#     "stream": false
+#   }'
+#
+# List model info:
+#   ollama show metrobot
+#
+# Remove and recreate after GGUF update:
+#   ollama rm metrobot && ollama create metrobot -f Modelfile
+# ─────────────────────────────────────────────────────────────────────────────
